@@ -33,6 +33,10 @@ If you like this project and find it useful, please consider giving it a star on
 
 ## [3.3.3] - Dev branch
 
+### Added
+
+- [config]: Add exposesWhiteList to select devices by their z2m features.
+
 ### Fixed
 
 - [platform]: Register a device whitelisted by ieee address when it is paired instead of after a restart.

@@ -107,9 +107,9 @@ All configurations can (and should) be done with the frontend.
 
 If needed you can configure the mqtt host, port, topic, username and password.
 
-If the whiteList is defined only the devices included are exposed to Matter.
+If the whiteList is defined only the devices included are exposed to Matter. If the exposesWhiteList is defined only the devices that have one of the listed z2m features are exposed to Matter, plus the devices in the whiteList. A feature is matched by its z2m name or property (e.g. contact or occupancy), not by the type of the expose it belongs to (e.g. light or cover). With an exposesWhiteList, groups and the Coordinator are exposed only if they are in the whiteList.
 
-If the blackList is defined the devices included will not be exposed to Matter.
+If the blackList is defined the devices included will not be exposed to Matter. The blackList wins over the whiteList and the exposesWhiteList.
 
 If any device creates issues put it in the blackList.
 
@@ -149,6 +149,7 @@ These are the default vules:
   "rejectUnauthorized": true,
   "whiteList": [],
   "blackList": [],
+  "exposesWhiteList": [],
   "switchList": [],
   "lightList": [],
   "outletList": [],
@@ -161,6 +162,16 @@ These are the default vules:
   "postfix": "",
   "debug": false,
   "unregisterOnShutdown": false
+}
+```
+
+If you want to expose only the devices with "contact" or "occupancy", add to the config
+
+```json
+{
+  ...
+  "exposesWhiteList": ["contact", "occupancy"]
+  ...
 }
 ```
 
