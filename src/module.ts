@@ -410,10 +410,10 @@ export class ZigbeePlatform extends MatterbridgeDynamicPlatform {
         (async (): Promise<void> => {
           this.log.info(`zigbee2MQTT sent device_interview device: ${friendly_name} ieee_address: ${ieee_address} status: ${status} supported: ${supported}`);
           if (status === 'successful' && supported) {
-            if (!this.validateDevice(friendly_name)) return;
-            this.log.info(`Registering device: ${friendly_name}`);
             const bridgedDevice = this.z2mBridgeDevices?.find((device) => device.friendly_name === friendly_name);
-            if (bridgedDevice) await this.registerZigbeeDevice(bridgedDevice);
+            if (!bridgedDevice || !this.validateDevice([bridgedDevice.friendly_name, bridgedDevice.ieee_address])) return;
+            this.log.info(`Registering device: ${friendly_name}`);
+            await this.registerZigbeeDevice(bridgedDevice);
           }
         })(),
         this.log,

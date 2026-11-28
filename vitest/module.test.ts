@@ -1177,6 +1177,38 @@ describe('TestPlatform', () => {
     expect(failed).toBeUndefined();
   });
 
+  describe('device_interview', () => {
+    let interviewPlatform: ZigbeePlatform;
+    const devices = [{ friendly_name: 'Contact sensor', ieee_address: '0x01' }] as BridgeDevice[];
+    const registerDevice = vi.fn<() => Promise<undefined>>();
+
+    beforeEach(() => {
+      interviewPlatform = new ZigbeePlatform(matterbridge, log, { ...mockConfig });
+      interviewPlatform.z2mBridgeDevices = devices;
+      vi.spyOn(interviewPlatform, 'registerZigbeeDevice').mockImplementation(registerDevice);
+    });
+
+    afterEach(async () => {
+      await interviewPlatform.onShutdown();
+    });
+
+    it('should register a device whitelisted by ieee address on device_interview', async () => {
+      Object.assign(interviewPlatform.config, { whiteList: ['0x01'] });
+      interviewPlatform.z2m.emit('device_interview', 'Contact sensor', '0x01', 'successful', true);
+      await flushAsync(undefined, undefined, 0);
+
+      expect(registerDevice).toHaveBeenCalledExactlyOnceWith(devices[0]);
+    });
+
+    it('should not register a device missing from the bridge devices on device_interview', async () => {
+      interviewPlatform.z2m.emit('device_interview', 'Unknown device', '0x05', 'successful', true);
+      await flushAsync(undefined, undefined, 0);
+
+      expect(registerDevice).not.toHaveBeenCalled();
+      expect(loggerLogSpy).not.toHaveBeenCalledWith(LogLevel.INFO, expect.stringContaining('Registering device: Unknown device'));
+    });
+  });
+
   it('should call onChangeLoggerLevel', async () => {
     await platform.onChangeLoggerLevel(LogLevel.DEBUG);
     expect(loggerLogSpy).toHaveBeenCalledWith(LogLevel.INFO, expect.stringMatching(/^Platform .* logger level changed successfully to/));
