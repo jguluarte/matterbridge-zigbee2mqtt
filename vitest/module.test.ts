@@ -95,6 +95,7 @@ describe('TestPlatform', () => {
     zigbeeFrontend: 'http://localhost:8080',
     blackList: [],
     whiteList: [],
+    exposesWhiteList: [],
     switchList: [],
     lightList: [],
     outletList: [],
@@ -226,6 +227,16 @@ describe('TestPlatform', () => {
       await instance.onShutdown();
       snackbarSpy.mockRestore();
       saveConfigSpy.mockRestore();
+    }
+  });
+
+  it('should default the exposesWhiteList to empty when the config has none', async () => {
+    const { exposesWhiteList: _exposesWhiteList, ...config } = mockConfig;
+    const instance = new ZigbeePlatform(matterbridge, log, config as ZigbeePlatformConfig);
+    try {
+      expect(instance.config.exposesWhiteList).toEqual([]);
+    } finally {
+      await instance.onShutdown();
     }
   });
 
@@ -1177,31 +1188,112 @@ describe('TestPlatform', () => {
     expect(failed).toBeUndefined();
   });
 
-  describe('device_interview', () => {
-    let interviewPlatform: ZigbeePlatform;
-    const devices = [{ friendly_name: 'Contact sensor', ieee_address: '0x01' }] as BridgeDevice[];
+  it('should return undefined when the device does not match the exposesWhiteList', async () => {
+    platform.config.exposesWhiteList = ['contact'];
+    try {
+      const result = await (platform as any).registerZigbeeDevice({
+        ieee_address: '0xexposes',
+        friendly_name: 'Exposes plug',
+        definition: { exposes: [{ type: 'numeric', name: 'power', property: 'power' }] },
+      });
+
+      expect(result).toBeUndefined();
+      expect(loggerLogSpy).toHaveBeenCalledWith(LogLevel.INFO, expect.stringContaining('because not in whitelist or exposes whitelist'));
+    } finally {
+      platform.config.exposesWhiteList = [];
+    }
+  });
+
+  it('should return undefined when the group is not in the whiteList with an exposesWhiteList', async () => {
+    platform.config.exposesWhiteList = ['contact'];
+    try {
+      const result = await platform.registerZigbeeGroup({ id: 9994, friendly_name: 'Exposes group', description: '', members: [], scenes: [] });
+
+      expect(result).toBeUndefined();
+      expect(loggerLogSpy).toHaveBeenCalledWith(LogLevel.INFO, expect.stringMatching(/Exposes group, group-9994.*because not in whitelist or exposes whitelist/));
+    } finally {
+      platform.config.exposesWhiteList = [];
+    }
+  });
+
+  it('should return undefined when the device matching the exposesWhiteList is in the blackList', async () => {
+    platform.config.exposesWhiteList = ['contact'];
+    platform.config.blackList = ['0xblack'];
+    try {
+      const result = await (platform as any).registerZigbeeDevice({
+        ieee_address: '0xblack',
+        friendly_name: 'Blacklisted sensor',
+        definition: { exposes: [{ type: 'binary', name: 'contact', property: 'contact' }] },
+      });
+
+      expect(result).toBeUndefined();
+      expect(loggerLogSpy).toHaveBeenCalledWith(LogLevel.INFO, expect.stringMatching(/Blacklisted sensor, 0xblack.*because in blacklist/));
+    } finally {
+      platform.config.exposesWhiteList = [];
+      platform.config.blackList = [];
+    }
+  });
+
+  describe('exposesWhiteList', () => {
+    let filterPlatform: ZigbeePlatform;
+    // oxfmt-ignore
+    const devices = [
+      { friendly_name: 'Contact sensor', ieee_address: '0x01', definition: { exposes: [{ type: 'binary', name: 'contact', property: 'contact' }, { type: 'numeric', property: 'battery' }] } },
+      { friendly_name: 'Light', ieee_address: '0x02', definition: { exposes: [{ type: 'light', features: [{ name: 'state', property: 'state' }, { name: 'brightness', property: 'brightness' }] }] } },
+      { friendly_name: 'Plug', ieee_address: '0x03', definition: { exposes: [{ type: 'switch', features: [{ name: 'state', property: 'state' }] }, { type: 'numeric', name: 'power', property: 'power' }] } },
+      { friendly_name: 'Dual switch', ieee_address: '0x04', definition: { exposes: [{ type: 'switch', endpoint: 'l1', features: [{ name: 'state', property: 'state_l1' }] }, { type: 'enum', name: 'power_on_behavior', property: 'power_on_behavior' }] } },
+      { friendly_name: 'Coordinator', ieee_address: '0x00' },
+    ] as BridgeDevice[];
+    const group: BridgeGroup = { id: 7, friendly_name: 'Lights', description: '', members: [], scenes: [] };
     const registerDevice = vi.fn<() => Promise<undefined>>();
 
     beforeEach(() => {
-      interviewPlatform = new ZigbeePlatform(matterbridge, log, { ...mockConfig });
-      interviewPlatform.z2mBridgeDevices = devices;
-      vi.spyOn(interviewPlatform, 'registerZigbeeDevice').mockImplementation(registerDevice);
+      filterPlatform = new ZigbeePlatform(matterbridge, log, { ...mockConfig });
+      filterPlatform.z2mBridgeDevices = devices;
+      vi.spyOn(filterPlatform, 'registerZigbeeDevice').mockImplementation(registerDevice);
     });
 
     afterEach(async () => {
-      await interviewPlatform.onShutdown();
+      await filterPlatform.onShutdown();
+    });
+
+    it.each([
+      { lists: {}, exposed: ['Contact sensor', 'Light', 'Plug', 'Dual switch', 'Coordinator', 'Lights'] },
+      { lists: { exposesWhiteList: ['contact'] }, exposed: ['Contact sensor'] },
+      { lists: { exposesWhiteList: ['power'] }, exposed: ['Plug'] },
+      { lists: { exposesWhiteList: ['state'] }, exposed: ['Light', 'Plug', 'Dual switch'] },
+      { lists: { exposesWhiteList: ['state_l1'] }, exposed: ['Dual switch'] },
+      { lists: { exposesWhiteList: ['contact'], whiteList: ['0x03', 'group-7'] }, exposed: ['Contact sensor', 'Plug', 'Lights'] },
+      { lists: { exposesWhiteList: ['contact'], blackList: ['Contact sensor'] }, exposed: [] },
+      { lists: { exposesWhiteList: ['contact'], whiteList: undefined, blackList: undefined }, exposed: ['Contact sensor'] },
+      { lists: { exposesWhiteList: ['state'], whiteList: ['Lights'], blackList: ['0x03', 'Lights'] }, exposed: ['Light', 'Dual switch'] },
+    ])('should expose $exposed with $lists', ({ lists, exposed }) => {
+      Object.assign(filterPlatform.config, lists);
+
+      const exposedDevices = devices.filter((device) => (filterPlatform as any).validateZigbeeDevice(device)).map((device) => device.friendly_name);
+      const exposedGroups = (filterPlatform as any).validateZigbeeGroup(group) ? [group.friendly_name] : [];
+
+      expect([...exposedDevices, ...exposedGroups]).toEqual(exposed);
+    });
+
+    it('should register a device matching only the exposesWhiteList on device_interview', async () => {
+      Object.assign(filterPlatform.config, { whiteList: ['Other'], exposesWhiteList: ['contact'] });
+      filterPlatform.z2m.emit('device_interview', 'Contact sensor', '0x01', 'successful', true);
+      await flushAsync(undefined, undefined, 0);
+
+      expect(registerDevice).toHaveBeenCalledExactlyOnceWith(devices[0]);
     });
 
     it('should register a device whitelisted by ieee address on device_interview', async () => {
-      Object.assign(interviewPlatform.config, { whiteList: ['0x01'] });
-      interviewPlatform.z2m.emit('device_interview', 'Contact sensor', '0x01', 'successful', true);
+      Object.assign(filterPlatform.config, { whiteList: ['0x01'] });
+      filterPlatform.z2m.emit('device_interview', 'Contact sensor', '0x01', 'successful', true);
       await flushAsync(undefined, undefined, 0);
 
       expect(registerDevice).toHaveBeenCalledExactlyOnceWith(devices[0]);
     });
 
     it('should not register a device missing from the bridge devices on device_interview', async () => {
-      interviewPlatform.z2m.emit('device_interview', 'Unknown device', '0x05', 'successful', true);
+      filterPlatform.z2m.emit('device_interview', 'Unknown device', '0x05', 'successful', true);
       await flushAsync(undefined, undefined, 0);
 
       expect(registerDevice).not.toHaveBeenCalled();

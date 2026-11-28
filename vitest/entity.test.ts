@@ -112,6 +112,7 @@ describe('Test Entity', () => {
     zigbeeFrontend: 'http://localhost:8080',
     blackList: [],
     whiteList: [],
+    exposesWhiteList: [],
     switchList: [],
     lightList: [],
     outletList: [],

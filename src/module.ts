@@ -26,7 +26,7 @@ import path from 'node:path';
 import { type BasePlatformConfig, MatterbridgeDynamicPlatform, type MatterbridgeEndpoint, type PlatformMatterbridge } from 'matterbridge';
 import { type AnsiLogger, CYAN, db, debugStringify, dn, er, gn, type LogLevel, nf, payloadStringify, wr, zb } from 'matterbridge/logger';
 import { BridgedDeviceBasicInformation, DoorLock } from 'matterbridge/matter/clusters';
-import { fireAndForget, getErrorMessage, isValidNumber, isValidString, waiter } from 'matterbridge/utils';
+import { fireAndForget, getErrorMessage, isValidArray, isValidNumber, isValidString, waiter } from 'matterbridge/utils';
 
 import { ZigbeeDevice, type ZigbeeEntity, ZigbeeGroup } from './entity.js';
 import type { Payload } from './payloadTypes.js';
@@ -50,6 +50,7 @@ export type ZigbeePlatformConfig = BasePlatformConfig & {
   zigbeeFrontend: string;
   whiteList: string[];
   blackList: string[];
+  exposesWhiteList: string[];
   switchList: string[];
   lightList: string[];
   outletList: string[];
@@ -170,6 +171,7 @@ export class ZigbeePlatform extends MatterbridgeDynamicPlatform {
         return false;
       });
     }
+    config.exposesWhiteList ??= [];
     config.featureBlackList ??= [];
     config.deviceFeatureBlackList ??= {};
     config.postfix ??= '';
@@ -411,7 +413,7 @@ export class ZigbeePlatform extends MatterbridgeDynamicPlatform {
           this.log.info(`zigbee2MQTT sent device_interview device: ${friendly_name} ieee_address: ${ieee_address} status: ${status} supported: ${supported}`);
           if (status === 'successful' && supported) {
             const bridgedDevice = this.z2mBridgeDevices?.find((device) => device.friendly_name === friendly_name);
-            if (!bridgedDevice || !this.validateDevice([bridgedDevice.friendly_name, bridgedDevice.ieee_address])) return;
+            if (!bridgedDevice || !this.validateZigbeeDevice(bridgedDevice)) return;
             this.log.info(`Registering device: ${friendly_name}`);
             await this.registerZigbeeDevice(bridgedDevice);
           }
@@ -693,7 +695,7 @@ export class ZigbeePlatform extends MatterbridgeDynamicPlatform {
 
   private async registerZigbeeDevice(device: BridgeDevice): Promise<ZigbeeDevice | undefined> {
     this.setSelectDevice(device.ieee_address, device.friendly_name, undefined, 'wifi');
-    if (!this.validateDevice([device.friendly_name, device.ieee_address], true)) {
+    if (!this.validateZigbeeDevice(device)) {
       return undefined;
     }
     this.log.debug(`Registering device ${dn}${device.friendly_name}${db} ID: ${zb}${device.ieee_address}${db}`);
@@ -715,7 +717,7 @@ export class ZigbeePlatform extends MatterbridgeDynamicPlatform {
 
   public async registerZigbeeGroup(group: BridgeGroup): Promise<ZigbeeGroup | undefined> {
     this.setSelectDevice(`group-${group.id}`, group.friendly_name, undefined, 'wifi');
-    if (!this.validateDevice([group.friendly_name, `group-${group.id}`], true)) {
+    if (!this.validateZigbeeGroup(group)) {
       return undefined;
     }
     this.log.debug(`Registering group ${gn}${group.friendly_name}${db} ID: ${zb}${group.id}${db}`);
@@ -733,6 +735,57 @@ export class ZigbeePlatform extends MatterbridgeDynamicPlatform {
       this.log.error(`Error registering group ${gn}${group.friendly_name}${er} ID: ${group.id}: ${getErrorMessage(error)}`);
     }
     return matterGroup;
+  }
+
+  /**
+   * Get the name and property of each feature of a device as z2m sends them: the features of each expose, else the expose itself
+   *
+   * @param {BridgeDevice} device The zigbee2mqtt device.
+   * @returns {string[]} The feature names and properties (empty for a device without definition, like the Coordinator).
+   */
+  private getFeatureNamesAndProperties(device: BridgeDevice): string[] {
+    const namesAndProperties: string[] = [];
+    for (const expose of device.definition?.exposes ?? []) {
+      for (const feature of expose.features ?? [expose]) {
+        if (feature.name) namesAndProperties.push(feature.name);
+        namesAndProperties.push(feature.property);
+      }
+    }
+    return namesAndProperties;
+  }
+
+  private validateZigbeeDevice(device: BridgeDevice): boolean {
+    return this.validateZigbeeEntity([device.friendly_name, device.ieee_address], this.getFeatureNamesAndProperties(device));
+  }
+
+  private validateZigbeeGroup(group: BridgeGroup): boolean {
+    return this.validateZigbeeEntity([group.friendly_name, `group-${group.id}`], []);
+  }
+
+  /**
+   * Validate a device or group against the blackList, whiteList and exposesWhiteList
+   *
+   * The blackList wins; otherwise the whiteList and the exposesWhiteList are a union.
+   *
+   * Edge cases:
+   *  - Empty exposesWhiteList -> validateDevice decides
+   *
+   * @param {string[]} names The names matched by blackList and whiteList: friendly name and ieee address, or friendly name and group-id.
+   * @param {string[]} features The feature names and properties matched by exposesWhiteList (empty for groups).
+   * @returns {boolean} True if the entity is allowed, false otherwise.
+   */
+  private validateZigbeeEntity(names: string[], features: string[]): boolean {
+    const { whiteList, blackList, exposesWhiteList } = this.config;
+    if (exposesWhiteList.length === 0) return this.validateDevice(names);
+
+    if (isValidArray(blackList) && names.some((name) => blackList.includes(name))) {
+      this.log.info(`Skipping device ${CYAN}${names.join(', ')}${nf} because in blacklist`);
+      return false;
+    }
+    if (isValidArray(whiteList) && names.some((name) => whiteList.includes(name))) return true;
+    if (features.some((feature) => exposesWhiteList.includes(feature))) return true;
+    this.log.info(`Skipping device ${CYAN}${names.join(', ')}${nf} because not in whitelist or exposes whitelist`);
+    return false;
   }
 
   private async unregisterZigbeeEntity(friendly_name: string): Promise<void> {
