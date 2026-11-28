@@ -105,6 +105,15 @@
       "uniqueItems": true,
       "selectFrom": "name"
     },
+    "exposesWhiteList": {
+      "title": "Exposes White List",
+      "description": "Only the devices with a zigbee2mqtt feature in the list (e.g. contact or occupancy) and the devices in the whiteList will be exposed. If the list is empty, only the whiteList is used.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
     "switchList": {
       "title": "Switch List",
       "description": "The devices in the list will be exposed like switches (don't use it for Alexa, use lightList or outletList instead).",
